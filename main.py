@@ -8,9 +8,9 @@ from typing import List, Dict, Any
 from setup_logic import compute_signals
 
 DEX_API_BASE = "https://api.dexscreener.com"
-app = FastAPI(title="MasterDex API", version="1.0.1")
+app = FastAPI(title="MasterDex API", version="1.0.2")
 
-# CORS (permite acesso de qualquer origem)
+# Configurações CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,32 +18,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Status endpoint ---
+# --- Endpoint de status ---
 @app.get("/status")
 def get_status():
     return {"status": "MasterDex API running"}
 
-# --- Redes suportadas ---
-CHAINS_ALL = ["solana", "bsc", "eth", "base", "polygon", "arbitrum", "avax", "fantom", "optimism", "ton"]
-
-# --- Buscar pares (corrigido para novo endpoint DexScreener) ---
+# --- Endpoint para buscar memecoins ou pares ---
 @app.get("/pairs")
-async def fetch_pairs(chain: str = Query("solana", description="Blockchain para análise")) -> Dict[str, Any]:
+async def fetch_pairs(query: str = Query("solana", description="Busca por token ou rede")) -> Dict[str, Any]:
     """
-    Retorna pares/tokens recentes da blockchain informada.
+    Busca pares e tokens por nome ou símbolo.
+    Exemplo: /pairs?query=solana
     """
     try:
         async with httpx.AsyncClient() as client:
-            url = f"{DEX_API_BASE}/latest/dex/tokens?q={chain}"
+            url = f"{DEX_API_BASE}/latest/dex/search?q={query}"
             response = await client.get(url, timeout=20.0)
             response.raise_for_status()
             data = response.json()
 
-        # Organiza o retorno de forma limpa
         return {
             "success": True,
-            "chain": chain,
-            "count": len(data.get("pairs", [])),
+            "query": query,
+            "results": len(data.get("pairs", [])),
             "data": data.get("pairs", [])
         }
 
@@ -53,7 +50,7 @@ async def fetch_pairs(chain: str = Query("solana", description="Blockchain para 
         return {"success": False, "error": str(e)}
 
 
-# --- Endpoint do Setup Precioso ---
+# --- Endpoint de sinais técnicos (Setup Precioso) ---
 @app.get("/signals")
 async def get_signals(
     prices: List[float] = Query(..., description="Lista de preços"),
