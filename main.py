@@ -7,13 +7,10 @@ import httpx
 from typing import List, Dict, Any
 from setup_logic import compute_signals
 
-# Base da API da Dexscreener
 DEX_API_BASE = "https://api.dexscreener.com"
+app = FastAPI(title="MasterDex API", version="1.0.1")
 
-# Inicialização da aplicação FastAPI
-app = FastAPI(title="MasterDex API", version="1.0.0")
-
-# Middleware CORS (permite acesso de qualquer origem)
+# CORS (permite acesso de qualquer origem)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,46 +18,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Endpoint de status (verificação do servidor) ---
+# --- Status endpoint ---
 @app.get("/status")
 def get_status():
     return {"status": "MasterDex API running"}
 
+# --- Redes suportadas ---
+CHAINS_ALL = ["solana", "bsc", "eth", "base", "polygon", "arbitrum", "avax", "fantom", "optimism", "ton"]
 
-# --- Cadeias suportadas ---
-CHAINS_ALL = [
-    "solana", "bsc", "eth", "base",
-    "polygon", "arbitrum", "avax",
-    "fantom", "optimism", "ton"
-]
-
-
-# --- Endpoint: buscar pares por rede ---
+# --- Buscar pares (corrigido para novo endpoint DexScreener) ---
 @app.get("/pairs")
-async def fetch_pairs(chain: str = Query("solana", description="Nome da blockchain")) -> Dict[str, Any]:
+async def fetch_pairs(chain: str = Query("solana", description="Blockchain para análise")) -> Dict[str, Any]:
     """
-    Retorna os pares (tokens) mais recentes de uma blockchain específica,
-    puxados da API Dexscreener.
+    Retorna pares/tokens recentes da blockchain informada.
     """
-    async with httpx.AsyncClient() as client:
-        url = f"{DEX_API_BASE}/latest/dex/pairs/{chain}"
-        response = await client.get(url, timeout=20.0)
-        response.raise_for_status()
-        data = response.json()
-    return {"chain": chain, "pairs": data}
+    try:
+        async with httpx.AsyncClient() as client:
+            url = f"{DEX_API_BASE}/latest/dex/tokens?q={chain}"
+            response = await client.get(url, timeout=20.0)
+            response.raise_for_status()
+            data = response.json()
+
+        # Organiza o retorno de forma limpa
+        return {
+            "success": True,
+            "chain": chain,
+            "count": len(data.get("pairs", [])),
+            "data": data.get("pairs", [])
+        }
+
+    except httpx.HTTPStatusError as e:
+        return {"success": False, "error": f"Erro HTTP {e.response.status_code} ao acessar {url}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
-# --- Endpoint: aplicar sinais técnicos (Setup Precioso) ---
+# --- Endpoint do Setup Precioso ---
 @app.get("/signals")
 async def get_signals(
-    prices: List[float] = Query(..., description="Lista de preços do ativo"),
-    fast: int = Query(7, description="Período da média rápida"),
-    slow: int = Query(21, description="Período da média lenta"),
-    pre_bars: int = Query(5, description="Barras de pré-alerta")
+    prices: List[float] = Query(..., description="Lista de preços"),
+    fast: int = Query(7, description="Período EMA rápida"),
+    slow: int = Query(21, description="Período EMA lenta"),
+    pre_bars: int = Query(5, description="Pré-alerta em barras")
 ):
-    """
-    Retorna os sinais do Setup Precioso baseados nos preços informados.
-    """
     try:
         result = compute_signals(prices, fast, slow, pre_bars)
         return {"success": True, "signals": result}
