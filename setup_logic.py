@@ -22,8 +22,8 @@ def compute_signals(prices: List[float], fast:int=7, slow:int=21, pre_bars:int=5
     s2, s1 = es[-1], es[-2]
 
     # Crossover detection
-    sign_prev = 1 if (f1 - s1) > 0 else -1 if (f1 - s1) < 0) else 0
-    sign_now  = 1 if (f2 - s2) > 0 else -1 if (f2 - s2) < 0) else 0
+    sign_prev = 1 if (f1 - s1) > 0 else (-1 if (f1 - s1) < 0 else 0)
+    sign_now  = 1 if (f2 - s2) > 0 else (-1 if (f2 - s2) < 0 else 0)
     cross = None
     if sign_prev != 0 and sign_now != sign_prev:
         cross = "buy" if (sign_now > 0) else "sell"
