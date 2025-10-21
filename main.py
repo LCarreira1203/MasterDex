@@ -1,13 +1,19 @@
-# main.py — MasterDex FastAPI backend (DexScreener only)
+# main.py — MasterDex backend (DexScreener integration)
+# Desenvolvido por L. Carreira & Jarvis
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from typing import List, Dict, Any
 from setup_logic import compute_signals
 
+# Base da API da Dexscreener
 DEX_API_BASE = "https://api.dexscreener.com"
+
+# Inicialização da aplicação FastAPI
 app = FastAPI(title="MasterDex API", version="1.0.0")
 
+# Middleware CORS (permite acesso de qualquer origem)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,85 +21,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-CHAINS_ALL = ["solana","bsc","eth","base","polygon","arbitrum","avax","fantom","optimism","ton"]
+# --- Endpoint de status (verificação do servidor) ---
+@app.get("/status")
+def get_status():
+    return {"status": "MasterDex API running"}
 
-async def fetch_pairs(client:httpx.AsyncClient, chain:str) -> List[Dict[str,Any]]:
-    url = f"{DEX_API_BASE}/latest/dex/pairs/{chain}"
-    r = await client.get(url, timeout=20.0)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("pairs", [])
 
-@app.get("/api/top")
-async def api_top(
-    chain: str = Query("all"),
-    limit: int = Query(20, ge=1, le=200),
-    min_liquidity_usd: float = Query(0.0, ge=0.0),
-    min_volume_24h_usd: float = Query(0.0, ge=0.0),
-    sort: str = Query("change24h")
-):
-    chains = CHAINS_ALL if chain == "all" else [chain]
-    out = []
+# --- Cadeias suportadas ---
+CHAINS_ALL = [
+    "solana", "bsc", "eth", "base",
+    "polygon", "arbitrum", "avax",
+    "fantom", "optimism", "ton"
+]
+
+
+# --- Endpoint: buscar pares por rede ---
+@app.get("/pairs")
+async def fetch_pairs(chain: str = Query("solana", description="Nome da blockchain")) -> Dict[str, Any]:
+    """
+    Retorna os pares (tokens) mais recentes de uma blockchain específica,
+    puxados da API Dexscreener.
+    """
     async with httpx.AsyncClient() as client:
-        for ch in chains:
-            try:
-                pairs = await fetch_pairs(client, ch)
-                for p in pairs:
-                    liq = float(p.get("liquidity",{}).get("usd",0) or 0)
-                    vol = float(p.get("volume",{}).get("h24",0) or 0)
-                    change = float(p.get("priceChange",{}).get("h24",0) or 0)
-                    out.append({
-                        "chain": p.get("chainId"),
-                        "pairAddress": p.get("pairAddress"),
-                        "baseToken": p.get("baseToken",{}),
-                        "quoteToken": p.get("quoteToken",{}),
-                        "priceUsd": p.get("priceUsd"),
-                        "txns": p.get("txns",{}),
-                        "liquidity": liq,
-                        "volume24h": vol,
-                        "change24h": change,
-                        "url": p.get("url"),
-                        "sparkline": p.get("priceChange",{}).get("series") or p.get("sparkline"),
-                    })
-            except Exception:
-                continue
-    key = {"change24h":"change24h","volume24h":"volume24h","liquidity":"liquidity"}.get(sort,"change24h")
-    out.sort(key=lambda x: float(x.get(key,0) or 0), reverse=True)
-    return {"count": len(out[:limit]), "items": out[:limit]}
+        url = f"{DEX_API_BASE}/latest/dex/pairs/{chain}"
+        response = await client.get(url, timeout=20.0)
+        response.raise_for_status()
+        data = response.json()
+    return {"chain": chain, "pairs": data}
 
-@app.get("/api/signal")
-async def api_signal(
-    chain: str,
-    pairAddress: str,
-    fast: int = 7,
-    slow: int = 21,
-    pre_bars: int = 5
+
+# --- Endpoint: aplicar sinais técnicos (Setup Precioso) ---
+@app.get("/signals")
+async def get_signals(
+    prices: List[float] = Query(..., description="Lista de preços do ativo"),
+    fast: int = Query(7, description="Período da média rápida"),
+    slow: int = Query(21, description="Período da média lenta"),
+    pre_bars: int = Query(5, description="Barras de pré-alerta")
 ):
-    url = f"{DEX_API_BASE}/latest/dex/pairs/{chain}/{pairAddress}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, timeout=20.0)
-        r.raise_for_status()
-        data = r.json()
-    pairs = data.get("pairs", [])
-    if not pairs:
-        return {"ok": False, "reason": "pair-not-found"}
-    p = pairs[0]
-    series = p.get("priceChange",{}).get("series") or p.get("sparkline")
-    if not series or len(series) < max(fast, slow) + 3:
-        return {"ok": False, "reason": "no-series"}
-    prices = [float(x) for x in series if x is not None]
-    sig = compute_signals(prices, fast=fast, slow=slow, pre_bars=pre_bars)
-    return {
-        "ok": True,
-        "pair": {
-            "name": f"{p.get('baseToken',{}).get('symbol','?')}/{p.get('quoteToken',{}).get('symbol','?')}",
-            "priceUsd": p.get("priceUsd"),
-            "url": p.get("url"),
-            "chain": p.get("chainId"),
-        },
-        "prices": prices[-300:],
-        "ema_fast": sig["ema_fast"][-300:],
-        "ema_slow": sig["ema_slow"][-300:],
-        "cross": sig["cross"],
-        "pre_alert": sig["pre_alert"]
-    }
+    """
+    Retorna os sinais do Setup Precioso baseados nos preços informados.
+    """
+    try:
+        result = compute_signals(prices, fast, slow, pre_bars)
+        return {"success": True, "signals": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
